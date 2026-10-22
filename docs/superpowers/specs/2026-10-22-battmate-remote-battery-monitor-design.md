@@ -23,7 +23,7 @@
 | 断电后远端行为 | 服务器机继续运行直到电量耗尽（SSH 持续可达，`pmset` 可精确读到放电状态） |
 | 展示形态 | 菜单栏图标（非通知中心小组件，原因见调研约束） |
 | 使用环境 | 编译 universal 二进制（arm64+x86_64），部署到 M5 芯片新机；最低兼容 macOS 13 |
-| 实现方案 | 方案 A：Swift 原生 + Swift Package Manager，无第三方运行时依赖 |
+| 实现方案 | 方案 A：Swift 原生，swiftc 直编（CLT 14.3.1 的 SwiftPM 存在无法修复的 PlatformPath 构建缺陷且无 CLT 升级可用，已实测 swiftc + CLT SDK 编译 AppKit 正常），零第三方依赖 |
 | SSH 免密 | 应用内提供「测试连接」与 `ssh-copy-id` 引导，不阻塞开发 |
 | 应用名 | BattMate（可改） |
 
@@ -96,7 +96,7 @@ Timer tick → SSHBatteryReader.fetch() → PowerState(来源,电量,状态,剩�
 
 ## 测试
 
-- 单元测试（XCTest，swift test）：pmset 输出解析（AC/电池/充电中/放电中/剩余时间/异常格式）、AlertEngine 状态转换矩阵。
+- 单元测试（自建轻量断言运行器 `Tests/main.swift`，`./test.sh` 一键编译运行，失败退出码非 0）：pmset 输出解析（AC/电池/充电中/放电中/剩余时间/异常格式）、AlertEngine 状态转换矩阵。
 - 集成联调：对 `ssh localhost` 验证 SSH 层；真机拔充电器验证 AC→Battery→低电量→恢复 全链路。
 
 ## 明确不做（YAGNI）
