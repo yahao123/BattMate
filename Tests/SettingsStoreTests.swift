@@ -37,6 +37,7 @@ func testStoreDefaultValues() throws {
     try expectTrue(d.soundEnabled)
     try expectFalse(d.autostartEnabled)
     try expectEqual(d.sshTarget, "")
+    try expectTrue(d.tunnels.isEmpty)
 }
 
 func registerSettingsStoreTests() {

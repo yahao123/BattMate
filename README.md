@@ -8,11 +8,15 @@
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![xcode](https://img.shields.io/badge/Xcode-不需要-success)
 
-一台 Mac 合盖当服务器 7×24 跑着，充电器接触不良、悄悄松脱，机器靠电池撑到耗尽关机，SSH 服务随之中断——而你毫无察觉。**BattMate 就是为这个场景写的**：在你的主力 Mac 菜单栏常驻一个图标，实时显示服务器机的充电状态，断电、低电量、失联立刻弹系统通知。
+一台 Mac 合盖当服务器 7×24 跑着，充电器接触不良、悄悄松脱，机器靠电池撑到耗尽关机，SSH 服务随之中断——而你毫无察觉。**BattMate 就是为这个场景写的**：在你的主力 Mac 菜单栏常驻一个图标，实时显示服务器机的充电状态，断电、低电量、失联立刻弹系统通知。顺带把常驻 SSH 端口隧道也收进来：多组「本机端口 → 服务器端口」由 autossh 自动保活。
 
 ## 功能特性
 
-- 📊 **菜单栏实时状态**：`⚡98` 绿（电源供电）/ `🔋45` 橙（电池供电）/ `⚠︎--` 灰（SSH 失联，失败期间闪烁）
+- 📊 **菜单栏实时状态**：SF Symbol 闪电 / 电池图标 + 电量数字，绿色（电源供电）/ 橙色（电池供电）/ 灰色警告（SSH 失联，失败期间闪烁）
+- 🔌 **多端口 SSH 隧道**：配置「本机端口 → 服务器端口」即常驻 `autossh` 本地转发，断线自动重连、异常退出退避重启
+- 📡 **隧道状态可见**：菜单中逐条显示彩色状态点：绿色运行中 / 橙色重连中 / 红色失败 / 灰色停用，可一键重启全部隧道
+- 🎛️ **现代设置面板**：侧边栏分区 + 玻璃拟态卡片，浅色 / 深色自适应，SSH 测试与端口校验即时反馈
+- 🧹 **退出即清理**：正常退出 App 会终止所有 autossh 进程并释放本地端口；隧道只监听 `127.0.0.1`，不暴露到局域网
 - 🔔 **四类告警**（系统通知，同一状态只提醒一次，防骚扰）：
   - 🔴 充电器断开
   - 🟠 电量低于阈值（默认 20%，可配）
@@ -34,8 +38,11 @@ flowchart LR
         E --> N[Notifier<br/>系统通知]
         E --> U[StatusBarUI<br/>菜单栏图标]
         E --> J[(status.json<br/>为小组件预留)]
+        T[TunnelManager<br/>每端口一个进程] --> X[autossh × N]
+        T --> U
     end
     A -- "SSH (ControlMaster 复用)" -->|pmset -g batt| B[服务器 Mac<br/>合盖运行]
+    A -- "SSH -L 本地转发" --> B
 ```
 
 ### 远端取数：一行 `pmset -g batt`
@@ -64,18 +71,43 @@ stateDiagram-v2
     失联 --> 电池: 恢复 → 🟢 连接已恢复 + 🔴 断电
 ```
 
+### SSH 端口隧道（autossh）
+
+在设置窗口「SSH 隧道」中添加任意多条映射，例如「本机 8080 → 服务器 80」。保存后 App 会为每条启用的映射启动一个常驻进程：
+
+```bash
+autossh -M 0 -N \
+  -o BatchMode=yes -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -L 127.0.0.1:8080:127.0.0.1:80 <SSH 目标>
+```
+
+- 只绑定本机 `127.0.0.1`，不会把端口暴露到局域网
+- 隧道断线由 autossh 自身守护；进程异常退出时，App 按 5s → 10s → 20s → 30s → 60s 退避重启
+- 菜单栏逐条展示状态；SSH 的典型错误（端口占用、免密失败、超时等）会翻译成可读原因
+- App 启动时自动建立；改配置后自动重建；正常退出时终止全部 autossh 并释放端口
+
+`autossh` 只需装在运行 BattMate 的这台 Mac 上，服务器端无需安装：
+
+```bash
+brew install autossh
+```
+
+App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`）、`/usr/bin`、`/opt/local/bin` 和当前 `PATH` 中探测 autossh。
+
 ## 技术栈
 
 | 层 | 选择 | 说明 |
 |---|---|---|
 | 语言 | Swift 5.8 | 单语言全栈 |
 | 菜单栏 | AppKit `NSStatusItem` | 常驻图标 + 下拉菜单，LSUIElement 无 Dock 图标 |
-| 设置界面 | SwiftUI `Form` | SSH 目标 / 轮询间隔 / 阈值 / 测试连接 |
+| 设置界面 | SwiftUI（自绘侧栏 + 玻璃卡片） | 连接 / 隧道 / 告警三栏，浅色与深色自适应 |
 | 通知 | `UNUserNotificationCenter` + `osascript` 兜底 | 双通道：UN 授权失败自动降级 AppleScript，转义经过单测 |
 | 网络 | 系统 `ssh`（Process 调用） | 零第三方依赖，ControlMaster 复用连接 |
+| SSH 隧道 | `autossh`（Process 调用） | 每条映射独立进程，`-M 0` + ServerAlive 守护，App 管生命周期 |
 | 自启 | `SMAppService` | macOS 13+ 原生登录项 |
 | 构建 | **swiftc 直编 + lipo** | 仅需 Command Line Tools，**不需要 Xcode** |
-| 测试 | 自建轻量断言运行器 | `./test.sh` 一键编译运行 37 个单测，零警告 |
+| 测试 | 自建轻量断言运行器 | `./test.sh` 一键编译运行 50 个单测，零警告 |
 
 ## 为什么这样设计（实现要点）
 
@@ -84,13 +116,15 @@ stateDiagram-v2
 - **为什么零第三方依赖？** 一个菜单栏监控工具，保持 ~30MB 内存、单文件部署、新机器拷过去就能用，不值得引入任何包管理。
 - **防抖为什么是 2 次采样？** 目标故障模式是「充电器接触不良」——电源会在通断间抖动。单次采样即告警会造成每 30 秒一对通知的风暴；连续 2 次同源采样确认（约 +30 秒延迟）可过滤全部抖动。
 - **通知为什么要 osascript 兜底？** 未打包调试、UN 授权被拒、投递异常时，`display notification` 是 100% 可用的保底通道；正文换行/引号/反斜杠的 AppleScript 转义有专门单测。
+- **隧道为什么用 autossh 而不是自己写重连？** SSH 的长连接保活、网络切换、服务器重启等边界很多；autossh 用 `-M 0` 关闭独立监控端口，配合 `ServerAliveInterval/CountMax` 由 ssh 自己判定断线，行为可预期。App 只需管进程生命周期，并用 `AUTOSSH_POLL=30` 把 autossh 的退避上限从默认 10 分钟压到 30 秒。
+- **为什么每条映射一个 autossh 进程？** 单条隧道故障不影响其他端口，失效隔离最彻底；同时与用户终端里手写多条 autossh 的习惯一致，排查时 `pgrep -fl autossh` 一眼可见。
 
 ## 构建
 
-环境要求：**仅 Command Line Tools**（`xcode-select --install`），无需完整 Xcode。
+环境要求：**仅 Command Line Tools**（`xcode-select --install`），无需完整 Xcode。**使用 SSH 隧道功能时**需额外安装 autossh：`brew install autossh`（只监控电量则不需要）。
 
 ```bash
-./test.sh    # 运行全部 37 个单元测试
+./test.sh    # 运行全部 50 个单元测试
 ./build.sh   # 产物: build/BattMate.app（arm64 + x86_64 universal，ad-hoc 签名）
 ```
 
@@ -101,13 +135,14 @@ stateDiagram-v2
 3. 首次启动自动弹出设置窗口：
    - 填服务器机的 SSH 目标（如 `ya@192.168.1.50`）→ 点「测试连接」
    - 失败会给出可复制的 `ssh-copy-id <目标>` 命令，终端执行后重测
-4. 保存后开始监控；建议在菜单勾选「开机自启动」
+   - 需要端口转发时，在「SSH 隧道」中添加映射（本机端口 → 服务器端口）；使用前确认已 `brew install autossh`
+4. 保存后开始监控并自动建立隧道；建议在菜单勾选「开机自启动」
 
 ## 配置与数据文件
 
 | 文件 | 路径 | 说明 |
 |---|---|---|
-| 配置 | `~/Library/Application Support/BattMate/config.json` | sshTarget / intervalSeconds (15~300，默认30) / lowBatteryThreshold (5~50，默认20) / soundEnabled / autostartEnabled |
+| 配置 | `~/Library/Application Support/BattMate/config.json` | sshTarget / intervalSeconds (15~300，默认30) / lowBatteryThreshold (5~50，默认20) / soundEnabled / autostartEnabled / tunnels[]（`id` / `localPort` / `remotePort` / `enabled`） |
 | 状态 | `~/Library/Application Support/BattMate/status.json` | 最近一次检测结果（实时刷新） |
 | 日志 | `~/Library/Application Support/BattMate/logs/battmate.log` | 每次检测与全部告警 |
 
@@ -116,6 +151,10 @@ stateDiagram-v2
 | 现象 | 处理 |
 |---|---|
 | 图标一直灰 `⚠︎--` | 终端手动 `ssh <目标> pmset -g batt` 验证；Permission denied → 执行 `ssh-copy-id <目标>` |
+| 隧道显示 🔴 未找到 autossh | 本机执行 `brew install autossh`，然后在菜单点「重启全部隧道」 |
+| 隧道显示 🔴 本机端口已被占用 | `lsof -nP -iTCP:<本机端口> -sTCP:LISTEN` 找到占用进程，换端口或停掉冲突进程 |
+| 隧道显示 🟠 免密登录未配置或被拒 | 与电量监控使用同一 SSH 目标，先执行 `ssh-copy-id <目标>` |
+| 退出 App 后端口仍被占用 | 强制结束进程可能遗留 autossh：`pkill -f "autossh.*<本机端口>"` |
 | 不弹通知 | 系统设置 → 通知 → BattMate → 允许通知 |
 | 提示「已损坏」 | `xattr -cr /Applications/BattMate.app` |
 | 提示「不支持此应用程序」 | 传输损坏（常见于微信/网盘传 .app），重新用 zip 打包传输 |
@@ -123,7 +162,7 @@ stateDiagram-v2
 ## 项目结构
 
 ```
-Sources/BattMateCore/     # 全部业务逻辑（37 个单测覆盖）
+Sources/BattMateCore/     # 全部业务逻辑（50 个单测覆盖）
   PowerState.swift          状态模型
   PMSetOutputParser.swift   pmset 输出解析
   SSHBatteryReader.swift    SSH 取数 + 超时看门狗
@@ -133,6 +172,9 @@ Sources/BattMateCore/     # 全部业务逻辑（37 个单测覆盖）
   SettingsStore.swift       配置持久化
   StatusReport.swift        status.json 落盘
   StatusTitleFormatter.swift 图标文本/颜色
+  TunnelConfig.swift        隧道配置与端口校验
+  AutosshTunnel.swift       autossh 路径探测与参数构造
+  TunnelManager.swift       多隧道进程管理/状态/退避重启
   Autostart.swift           开机自启
 Sources/BattMate/         # 壳层
   main.swift                入口
@@ -149,6 +191,12 @@ build.sh / test.sh        # 构建与测试脚本
 
 **Q: 服务器机需要装什么？**
 A: 什么都不用装。`pmset` 是 macOS 自带命令，免 sudo。
+
+**Q: SSH 隧道需要服务器装 autossh 吗？**
+A: 不需要。autossh 只安装在运行 BattMate 的这台 Mac 上（`brew install autossh`），服务器只需允许 SSH 登录。
+
+**Q: 能配置多条隧道吗？会暴露到局域网吗？**
+A: 可以配置任意多条启用映射，每条对应一个独立的 autossh 进程；所有映射共用同一个 SSH 目标，本机端口不能重复。隧道只绑定 `127.0.0.1`，不会暴露到局域网。
 
 **Q: 会拖慢我的 Mac 吗？**
 A: 不会。每 30 秒一次 SSH 复用连接的轻量调用 + 一次文本解析，内存占用约 30MB。

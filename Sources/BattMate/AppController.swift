@@ -7,6 +7,7 @@ final class AppController {
     private let scheduler = PollScheduler()
     private let statusUI = StatusBarUI()
     private let settingsWindow = SettingsWindowController()
+    private let tunnelManager = TunnelManager()
 
     private(set) var config: AppConfig
     private var reader: SSHBatteryReader
@@ -35,10 +36,17 @@ final class AppController {
 
     func start() {
         wireUI()
-        scheduler.onTick = { [weak self] in self?.pollOnce() }
+        tunnelManager.onStatusChange = { [weak self] statuses in
+            self?.statusUI.updateTunnels(statuses)
+        }
+        scheduler.onTick = { [weak self] in
+            self?.pollOnce()
+            self?.tunnelManager.ensureRunning()
+        }
         // 契约：start() 全生命周期只调用一次（PollScheduler 会注册 NSWorkspace 观察者，
         // 重复 start 会重复注册）；之后改间隔一律用 restart()
         scheduler.start(interval: clampedInterval)
+        tunnelManager.apply(tunnels: config.tunnels, target: config.sshTarget)
         if config.sshTarget.isEmpty {
             store.save(config) // 首次启动即落盘默认配置（冒烟预期：config.json 已生成）
             statusUI.update(sample: nil, failureStreak: 0, checkedAt: nil, unconfigured: true)
@@ -49,8 +57,14 @@ final class AppController {
         }
     }
 
+    /// 正常退出前杀掉全部 autossh，避免端口被遗留进程占用
+    func shutdown() {
+        tunnelManager.stopAll()
+    }
+
     private func wireUI() {
         statusUI.onRefresh = { [weak self] in self?.pollOnce() }
+        statusUI.onRestartTunnels = { [weak self] in self?.tunnelManager.restartAll() }
         statusUI.onOpenSettings = { [weak self] in self?.openSettings() }
         statusUI.onQuit = { NSApp.terminate(nil) }
         statusUI.onToggleAutostart = { [weak self] enabled in
@@ -108,12 +122,18 @@ final class AppController {
 
     private func applyConfig(_ c: AppConfig) {
         let targetChanged = c.sshTarget != config.sshTarget
+        let tunnelsChanged = c.tunnels != config.tunnels
         config = c
         if targetChanged {
             pollGeneration += 1 // 作废换目标前的在途请求
             reader = SSHBatteryReader(target: c.sshTarget)
             engine = AlertEngine() // 换目标后重建基线
             lastSample = nil
+        }
+        if targetChanged || tunnelsChanged {
+            tunnelManager.apply(tunnels: c.tunnels, target: c.sshTarget)
+        } else {
+            tunnelManager.ensureRunning()
         }
         scheduler.restart(interval: clampedInterval)
         if !c.sshTarget.isEmpty {
