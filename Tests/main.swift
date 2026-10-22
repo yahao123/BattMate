@@ -56,6 +56,7 @@ registerSSHBatteryReaderTests()
 registerNotifierTests()
 registerAppLogTests()
 registerStatusReportTests()
+registerPollSchedulerTests()
 
 // ---- 运行 ----
 var failedCount = 0
