@@ -8,6 +8,7 @@ final class AppController {
     private let statusUI = StatusBarUI()
     private let settingsWindow = SettingsWindowController()
     private let tunnelManager = TunnelManager()
+    private let topProcessesWindow = TopProcessesWindowController()
 
     private(set) var config: AppConfig
     private var reader: SSHBatteryReader
@@ -66,6 +67,7 @@ final class AppController {
         statusUI.onRefresh = { [weak self] in self?.pollOnce() }
         statusUI.onRestartTunnels = { [weak self] in self?.tunnelManager.restartAll() }
         statusUI.onOpenSettings = { [weak self] in self?.openSettings() }
+        statusUI.onShowTopProcesses = { [weak self] in self?.showTopProcesses() }
         statusUI.onQuit = { NSApp.terminate(nil) }
         statusUI.onToggleAutostart = { [weak self] enabled in
             guard let self else { return }
@@ -78,6 +80,14 @@ final class AppController {
         settingsWindow.show(store: store, config: config) { [weak self] newConfig in
             self?.applyConfig(newConfig)
         }
+    }
+
+    private func showTopProcesses() {
+        guard !config.sshTarget.isEmpty else {
+            openSettings()
+            return
+        }
+        topProcessesWindow.show(target: config.sshTarget)
     }
 
     func pollOnce() {
@@ -104,7 +114,7 @@ final class AppController {
             lastSample = s
             StatusReport.write(StatusReport(reachable: true, source: s.source, percent: s.percent,
                                             status: s.status, minutesRemaining: s.minutesRemaining,
-                                            checkedAt: s.timestamp, lastError: nil),
+                                            checkedAt: s.timestamp, lastError: nil, usage: s.usage),
                                to: reportURL)
             AppLog.write("OK source=\(s.source.rawValue) pct=\(s.percent.map(String.init) ?? "-")")
         case .failure(let msg):
@@ -129,6 +139,7 @@ final class AppController {
             reader = SSHBatteryReader(target: c.sshTarget)
             engine = AlertEngine() // 换目标后重建基线
             lastSample = nil
+            topProcessesWindow.close()
         }
         if targetChanged || tunnelsChanged {
             tunnelManager.apply(tunnels: c.tunnels, target: c.sshTarget)

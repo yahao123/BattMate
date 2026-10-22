@@ -10,10 +10,11 @@ public struct StatusReport: Codable, Equatable {
     public var minutesRemaining: Int?
     public var checkedAt: Date
     public var lastError: String?
+    public var usage: SystemUsage?
 
     public init(reachable: Bool, source: PowerSource?, percent: Int?,
                 status: ChargeStatus?, minutesRemaining: Int?,
-                checkedAt: Date, lastError: String?) {
+                checkedAt: Date, lastError: String?, usage: SystemUsage? = nil) {
         self.reachable = reachable
         self.source = source
         self.percent = percent
@@ -21,6 +22,7 @@ public struct StatusReport: Codable, Equatable {
         self.minutesRemaining = minutesRemaining
         self.checkedAt = checkedAt
         self.lastError = lastError
+        self.usage = usage
     }
 
     public static func write(_ report: StatusReport, to url: URL) {

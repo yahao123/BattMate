@@ -7,6 +7,7 @@ final class StatusBarUI: NSObject {
     var onQuit: (() -> Void)?
     var onToggleAutostart: ((Bool) -> Void)?
     var onRestartTunnels: (() -> Void)?
+    var onShowTopProcesses: (() -> Void)?
 
     private let item: NSStatusItem
     private let menu = NSMenu()
@@ -14,6 +15,8 @@ final class StatusBarUI: NSObject {
     private var percentItem: NSMenuItem!
     private var remainingItem: NSMenuItem!
     private var checkedItem: NSMenuItem!
+    private var cpuItem: NSMenuItem!
+    private var memoryItem: NSMenuItem!
     private var autostartItem: NSMenuItem!
     private var tunnelHeaderItem: NSMenuItem!
     private var tunnelRestartItem: NSMenuItem!
@@ -50,6 +53,18 @@ final class StatusBarUI: NSObject {
             detail.isEnabled = false
             menu.addItem(detail)
         }
+
+        cpuItem = NSMenuItem(title: "CPU 使用率 —", action: #selector(topProcessesClicked), keyEquivalent: "")
+        cpuItem.image = symbolImage("cpu", pointSize: 12, weight: .regular)
+        cpuItem.target = self
+        cpuItem.isEnabled = false
+        cpuItem.toolTip = "点击查看服务器上占用 CPU 最高的进程"
+        menu.addItem(cpuItem)
+
+        memoryItem = NSMenuItem(title: "内存使用率 —", action: nil, keyEquivalent: "")
+        memoryItem.image = symbolImage("memorychip", pointSize: 12, weight: .regular)
+        memoryItem.isEnabled = false
+        menu.addItem(memoryItem)
 
         menu.addItem(.separator())
 
@@ -121,6 +136,42 @@ final class StatusBarUI: NSObject {
             checkedItem.title = "最后检测 —"
         }
         checkedItem.image = symbolImage("clock", pointSize: 12, weight: .regular)
+
+        if let usage = sample?.usage {
+            cpuItem.title = "CPU 使用率 \(usage.cpuPercent)%"
+            cpuItem.isEnabled = true
+            cpuItem.toolTip = "点击查看服务器上占用 CPU 最高的进程"
+            cpuItem.image = symbolImage("cpu", pointSize: 12, weight: .regular,
+                                        color: loadColor(usage.cpuPercent))
+            memoryItem.title = "内存使用率 \(usage.memoryPercent)%"
+            memoryItem.toolTip = "已用 \(usage.memoryUsedText) / \(usage.memoryTotalText)"
+            memoryItem.image = symbolImage("memorychip", pointSize: 12, weight: .regular,
+                                           color: loadColor(usage.memoryPercent))
+        } else if unconfigured {
+            cpuItem.title = "CPU 使用率 —"
+            cpuItem.isEnabled = false
+            cpuItem.toolTip = "配置服务器后可用"
+            memoryItem.title = "内存使用率 —"
+            memoryItem.toolTip = "配置服务器后可用"
+            cpuItem.image = symbolImage("cpu", pointSize: 12, weight: .regular)
+            memoryItem.image = symbolImage("memorychip", pointSize: 12, weight: .regular)
+        } else {
+            cpuItem.title = "CPU 使用率 —"
+            cpuItem.isEnabled = false
+            cpuItem.toolTip = "尚未取到资源数据"
+            memoryItem.title = "内存使用率 —"
+            memoryItem.toolTip = "尚未取到资源数据"
+            cpuItem.image = symbolImage("cpu", pointSize: 12, weight: .regular)
+            memoryItem.image = symbolImage("memorychip", pointSize: 12, weight: .regular)
+        }
+    }
+
+    private func loadColor(_ percent: Int) -> NSColor {
+        switch percent {
+        case 85...: return .systemRed
+        case 60...: return .systemOrange
+        default: return .systemGreen
+        }
     }
 
     func updateTunnels(_ statuses: [TunnelStatus]) {
@@ -262,6 +313,7 @@ final class StatusBarUI: NSObject {
     @objc private func settingsClicked() { onOpenSettings?() }
     @objc private func quitClicked() { onQuit?() }
     @objc private func restartTunnelsClicked() { onRestartTunnels?() }
+    @objc private func topProcessesClicked() { onShowTopProcesses?() }
 
     @objc private func autostartClicked(_ sender: NSMenuItem) {
         let target = sender.state == .on ? false : true

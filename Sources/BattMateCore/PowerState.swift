@@ -19,14 +19,16 @@ public struct PowerSample: Codable, Equatable {
     public var percent: Int?
     public var status: ChargeStatus
     public var minutesRemaining: Int?
+    public var usage: SystemUsage?
     public var timestamp: Date
 
     public init(source: PowerSource, percent: Int?, status: ChargeStatus,
-                minutesRemaining: Int?, timestamp: Date = Date()) {
+                minutesRemaining: Int?, usage: SystemUsage? = nil, timestamp: Date = Date()) {
         self.source = source
         self.percent = percent
         self.status = status
         self.minutesRemaining = minutesRemaining
+        self.usage = usage
         self.timestamp = timestamp
     }
 

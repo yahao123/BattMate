@@ -2,10 +2,11 @@
 import Foundation
 
 public final class SSHBatteryReader {
+    public static let metricsDelimiter = "__BATTMATE_METRICS__"
+
     public let target: String
     public let timeout: TimeInterval
-    private let controlPath: String
-    private let sshPath: String
+    private let runner: SSHCommandRunner
 
     public init(target: String,
                 timeout: TimeInterval = 12,
@@ -13,69 +14,44 @@ public final class SSHBatteryReader {
                 sshPath: String = "/usr/bin/ssh") {
         self.target = target
         self.timeout = timeout
-        self.controlPath = controlPath
-        self.sshPath = sshPath
+        self.runner = SSHCommandRunner(target: target,
+                                       timeout: timeout,
+                                       controlPath: controlPath,
+                                       sshPath: sshPath)
     }
 
     public static func buildArguments(target: String, controlPath: String) -> [String] {
-        [
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ControlMaster=auto",
-            "-o", "ControlPath=\(controlPath)",
-            "-o", "ControlPersist=60",
-            target,
-            "pmset", "-g", "batt"
-        ]
+        SSHCommandRunner.arguments(target: target, controlPath: controlPath, command: remoteCommand)
+    }
+
+    /// 一次 SSH 会话同时取电量与资源占用；top 失败时用 `|| true` 保住电量数据
+    static var remoteCommand: String {
+        "pmset -g batt; echo '\(metricsDelimiter)'; top -l 2 -n 0 -s 1 | grep -E '^(CPU usage|PhysMem)' || true"
     }
 
     /// 后台线程执行，结果回调（线程不确定，调用方自行切主线程）
     public func fetch(completion: @escaping (FetchResult) -> Void) {
-        DispatchQueue.global(qos: .utility).async { [self] in
-            completion(runSync())
+        runner.run(command: Self.remoteCommand) { result in
+            completion(Self.parse(result))
         }
     }
 
-    func runSync() -> FetchResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: sshPath)
-        process.arguments = Self.buildArguments(target: target, controlPath: controlPath)
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-
-        do {
-            try process.run()
-        } catch {
-            return .failure("无法启动 ssh: \(error.localizedDescription)")
-        }
-
-        // 看门狗：超时强杀，防止悬挂
-        let watchdog = DispatchSource.makeTimerSource(queue: DispatchQueue.global())
-        watchdog.schedule(deadline: .now() + timeout)
-        watchdog.setEventHandler { [weak process] in
-            if let p = process, p.isRunning { p.terminate() }
-        }
-        watchdog.resume()
-        defer { watchdog.cancel() }
-
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let stderr = String(data: errData, encoding: .utf8) ?? ""
-            return .failure("ssh 退出码 \(process.terminationStatus): \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
-        }
-        guard let text = String(data: outData, encoding: .utf8) else {
-            return .failure("输出不是 UTF-8")
-        }
-        do {
-            return .success(try PMSetOutputParser.parse(text))
-        } catch {
-            return .failure("解析失败: \(text.prefix(120))")
+    static func parse(_ result: Result<String, SSHCommandFailure>, date: Date = Date()) -> FetchResult {
+        switch result {
+        case .failure(let error):
+            return .failure(error.message)
+        case .success(let text):
+            let sections = text.components(separatedBy: metricsDelimiter)
+            do {
+                var sample = try PMSetOutputParser.parse(sections[0], date: date)
+                if sections.count > 1 {
+                    let metrics = sections.dropFirst().joined(separator: metricsDelimiter)
+                    sample.usage = try? SystemUsageParser.parse(metrics, date: date)
+                }
+                return .success(sample)
+            } catch {
+                return .failure("解析失败: \(text.prefix(120))")
+            }
         }
     }
 }

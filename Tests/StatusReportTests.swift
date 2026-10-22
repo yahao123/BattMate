@@ -5,7 +5,11 @@ func testReportJSONRoundtrip() throws {
     let report = StatusReport(reachable: true, source: .battery, percent: 45,
                               status: .discharging, minutesRemaining: 167,
                               checkedAt: Date(timeIntervalSince1970: 1_792_600_000),
-                              lastError: nil)
+                              lastError: nil,
+                              usage: SystemUsage(cpuPercent: 12, memoryPercent: 73,
+                                                 memoryUsedBytes: 12 * 1024 * 1024 * 1024,
+                                                 memoryTotalBytes: 16 * 1024 * 1024 * 1024,
+                                                 sampledAt: Date(timeIntervalSince1970: 1_792_600_000)))
     let dir = tempTestDir("report")
     defer { try? FileManager.default.removeItem(at: dir) }
     let url = dir.appendingPathComponent("status.json")

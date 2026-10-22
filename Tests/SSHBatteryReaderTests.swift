@@ -12,8 +12,44 @@ func testReaderBuildArguments() throws {
     try expectTrue(args.contains("ControlPersist=60"))
     try expectTrue(args.contains("StrictHostKeyChecking=accept-new"))
     try expectTrue(args.contains("ya@192.168.1.50"))
-    // 命令尾部是 pmset -g batt
-    try expectEqual(Array(args.suffix(3)), ["pmset", "-g", "batt"])
+    // 最后一项是一条合并命令：pmset + CPU/内存采样
+    let command = try expectNotNil(args.last)
+    try expectEqual(args.suffix(2).first, "ya@192.168.1.50")
+    try expectTrue(command.contains("pmset -g batt"))
+    try expectTrue(command.contains("top -l 2 -n 0 -s 1"))
+}
+
+func testReaderParsesBatteryAndUsage() throws {
+    let output = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=5439587)\t100%; charged; 0:00 remaining present: true
+    __BATTMATE_METRICS__
+    CPU usage: 5.36% user, 15.14% sys, 79.49% idle 
+    PhysMem: 12G used (2737M wired, 884M compressor), 4409M unused.
+    """
+    let date = Date(timeIntervalSince1970: 1_792_600_000)
+    guard case .success(let sample) = SSHBatteryReader.parse(.success(output), date: date) else {
+        throw TestFailure(message: "应解析成功")
+    }
+    try expectEqual(sample.percent, 100)
+    try expectEqual(sample.source, .ac)
+    let usage = try expectNotNil(sample.usage)
+    try expectEqual(usage.cpuPercent, 21)
+    try expectEqual(usage.memoryPercent, 74)
+    try expectEqual(usage.sampledAt, date)
+}
+
+func testReaderKeepsBatteryWhenMetricsMissing() throws {
+    let output = """
+    Now drawing from 'Battery Power'
+     -InternalBattery-0 (id=5439587)\t45%; discharging; 2:47 remaining present: true
+    __BATTMATE_METRICS__
+    """
+    guard case .success(let sample) = SSHBatteryReader.parse(.success(output)) else {
+        throw TestFailure(message: "缺少资源采样时仍应返回电量")
+    }
+    try expectEqual(sample.percent, 45)
+    try expectNil(sample.usage)
 }
 
 func testReaderFailureOnNonZeroExit() throws {
@@ -45,6 +81,8 @@ func testReaderFailureWhenHostUnreachable() throws {
 
 func registerSSHBatteryReaderTests() {
     registerTest("读取器：构造 ssh 参数", testReaderBuildArguments)
+    registerTest("读取器：解析电量与资源采样", testReaderParsesBatteryAndUsage)
+    registerTest("读取器：缺少资源采样仍返回电量", testReaderKeepsBatteryWhenMetricsMissing)
     registerTest("读取器：非零退出包装为失败", testReaderFailureOnNonZeroExit)
     registerTest("读取器：不可达主机失败", testReaderFailureWhenHostUnreachable)
 }
