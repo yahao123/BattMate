@@ -51,6 +51,7 @@ func tempTestDir(_ label: String) -> URL {
 registerSanityTests()
 registerPMSetOutputParserTests()
 registerSettingsStoreTests()
+registerAlertEngineTests()
 
 // ---- 运行 ----
 var failedCount = 0
