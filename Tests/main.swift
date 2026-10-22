@@ -35,9 +35,9 @@ func expectNotNil<T>(_ value: T?, _ context: String = "") throws -> T {
     return v
 }
 
-func expectThrows(_ context: String = "", _ expression: @autoclosure () throws -> Void) throws {
+func expectThrows<T>(_ context: String = "", _ expression: @autoclosure () throws -> T) throws {
     var threw = false
-    do { try expression() } catch { threw = true }
+    do { _ = try expression() } catch { threw = true }
     if !threw { throw TestFailure(message: "应抛错却正常返回 \(context)") }
 }
 
@@ -48,6 +48,7 @@ func tempTestDir(_ label: String) -> URL {
 
 // ---- 各测试组注册 ----
 registerSanityTests()
+registerPMSetOutputParserTests()
 
 // ---- 运行 ----
 var failedCount = 0
