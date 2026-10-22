@@ -56,8 +56,8 @@ final class SettingsViewModel: ObservableObject {
                     let pct = s.percent.map { "，电量 \($0)%" } ?? ""
                     self.testResult = "✅ 连接成功：\(src)\(pct)"
                     self.copyableHint = ""
-                case .failure:
-                    self.testResult = "❌ 连接失败（若从未配置过免密登录，先执行下面命令）"
+                case .failure(let msg):
+                    self.testResult = "❌ 连接失败：\(msg)（若从未配置过免密登录，先执行下面命令）"
                     self.copyableHint = "ssh-copy-id \(target)"
                 }
             }
