@@ -37,10 +37,18 @@ func testTitleFailureStreakShowsWarning() throws {
     try expectEqual(t.color, NSColor.systemGray)
 }
 
+func testTitleFailureStreakOverridesStaleSample() throws {
+    // 失联时残留的上次成功样例不应再展示健康图标
+    let t = StatusTitleFormatter.title(sample: fmtSample(.ac, percent: 98), failureStreak: 2)
+    try expectEqual(t.text, "⚠︎--")
+    try expectEqual(t.color, NSColor.systemGray)
+}
+
 func registerStatusTitleFormatterTests() {
     registerTest("图标：AC 绿色闪电", testTitleACShowsBoltAndGreen)
     registerTest("图标：电池橙色", testTitleBatteryShowsEmojiAndOrange)
     registerTest("图标：未知来源", testTitleUnknownSourceShowsDash)
     registerTest("图标：无样例省略号", testTitleNoSampleNoFailureShowsEllipsis)
     registerTest("图标：失败警告", testTitleFailureStreakShowsWarning)
+    registerTest("图标：失联时旧样例置灰", testTitleFailureStreakOverridesStaleSample)
 }

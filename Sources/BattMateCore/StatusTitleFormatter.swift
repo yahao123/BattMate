@@ -3,6 +3,11 @@ import AppKit
 
 public enum StatusTitleFormatter {
     public static func title(sample: PowerSample?, failureStreak: Int) -> (text: String, color: NSColor) {
+        // 失联优先判定：连续失败时在途样例只是上次成功的过期数据，
+        // 图标必须置灰告警，不能沿用旧健康状态误导用户
+        if failureStreak > 0 {
+            return ("⚠︎--", .systemGray)
+        }
         if let s = sample {
             switch s.source {
             case .ac:
@@ -12,9 +17,6 @@ public enum StatusTitleFormatter {
             case .unknown:
                 return ("·--", .systemGray)
             }
-        }
-        if failureStreak > 0 {
-            return ("⚠︎--", .systemGray)
         }
         return ("…", .systemGray)
     }
