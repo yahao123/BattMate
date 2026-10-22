@@ -30,6 +30,7 @@ func expectNil<T>(_ value: T?, _ context: String = "") throws {
     if value != nil { throw TestFailure(message: "应为 nil，实际 \(value!) \(context)") }
 }
 
+@discardableResult
 func expectNotNil<T>(_ value: T?, _ context: String = "") throws -> T {
     guard let v = value else { throw TestFailure(message: "不应为 nil \(context)") }
     return v
