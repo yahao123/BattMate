@@ -57,6 +57,7 @@ registerNotifierTests()
 registerAppLogTests()
 registerStatusReportTests()
 registerPollSchedulerTests()
+registerStatusTitleFormatterTests()
 
 // ---- 运行 ----
 var failedCount = 0
