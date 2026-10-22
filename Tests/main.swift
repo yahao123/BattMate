@@ -53,6 +53,9 @@ registerPMSetOutputParserTests()
 registerSettingsStoreTests()
 registerAlertEngineTests()
 registerSSHBatteryReaderTests()
+registerNotifierTests()
+registerAppLogTests()
+registerStatusReportTests()
 
 // ---- 运行 ----
 var failedCount = 0
