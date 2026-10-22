@@ -13,7 +13,8 @@
 ## 功能特性
 
 - 📊 **菜单栏实时状态**：SF Symbol 闪电 / 电池图标 + 电量数字，绿色（电源供电）/ 橙色（电池供电）/ 灰色警告（SSH 失联，失败期间闪烁）
-- 📈 **CPU / 内存监控**：菜单实时显示服务器 CPU 与内存使用率（按负载变色）；点击 CPU 打开 Top 10 进程窗口，每 5 秒自动刷新
+- 📈 **CPU / 内存监控**：菜单实时显示服务器 CPU 与内存使用率（按负载变色）；点击任一项打开性能面板——最近趋势折线图 + CPU Top 10 进程（每 5 秒刷新）
+- 🗜️ **64 KB 本地趋势**：每次采样追加到本机 `metrics-history.txt`，严格不超过 64 KB，写满自动剔除最旧数据；每 30 秒一条，约可保留最近 52 小时（2.2 天）
 - 🔌 **多端口 SSH 隧道**：配置「本机端口 → 服务器端口」即常驻 `autossh` 本地转发，断线自动重连、异常退出退避重启
 - 📡 **隧道状态可见**：菜单中逐条显示彩色状态点：绿色运行中 / 橙色重连中 / 红色失败 / 灰色停用，可一键重启全部隧道
 - 🎛️ **现代设置面板**：侧边栏分区 + 玻璃拟态卡片，浅色 / 深色自适应，SSH 测试与端口校验即时反馈
@@ -37,10 +38,13 @@ flowchart LR
         R --> P[PMSetOutputParser<br/>电量解析]
         R --> Q[SystemUsageParser<br/>CPU / 内存解析]
         P --> E[AlertEngine<br/>告警状态机 + 防抖]
+        Q --> H[MetricsHistoryStore<br/>64 KB 本地趋势]
         E --> N[Notifier<br/>系统通知]
-        E --> U[StatusBarUI<br/>菜单栏 / Top 窗口]
+        E --> U[StatusBarUI<br/>菜单栏]
         E --> J[(status.json<br/>为小组件预留)]
-        U -.点击 CPU.-> O[TopProcessReader<br/>ps -r Top 10]
+        U -.点击 CPU / 内存.-> W[PerformanceWindow<br/>折线图 + Top 10]
+        H --> W
+        W -.按需 / 每 5 秒.-> O[TopProcessReader<br/>ps -r Top 10]
         T[TunnelManager<br/>每端口一个进程] --> X[autossh × N]
         T --> U
     end
@@ -61,7 +65,13 @@ PhysMem: 12G used (2737M wired, 884M compressor), 4409M unused.
 
 每次轮询只建立一条 SSH 命令：`pmset -g batt`，然后 `top -l 2 -n 0 -s 1` 取第二次采样（第一次是开机以来的均值，第二次才是当前值）。解析出电源来源、电量、充放电状态、剩余时间、CPU 使用率与内存占用。`top` 失败不会连带丢失电量数据。
 
-点击菜单中的 CPU 行时，按需执行 `ps -Ao pid=,pcpu=,pmem=,comm= -r`，取占用最高的 10 个进程，窗口每 5 秒刷新一次，关闭即停止请求。
+点击菜单中的 CPU 或内存行，都会打开性能面板：上半部分是所选指标的折线图（CPU / 内存可切换），右侧是 CPU Top 10 进程。进程列表按需执行 `ps -Ao pid=,pcpu=,pmem=,comm= -r` 获取，打开期间每 5 秒刷新，关闭窗口即停止请求。
+
+### 64 KB 指标历史
+
+每次成功采样都会把 CPU / 内存百分比追加到本机 `metrics-history.txt`：首行是基准时间戳，后续每行只存 `秒偏移,CPU,内存`（如 `30,12,68`）。文件严格不超过 64 KB，写满后从最旧的采样开始剔除。
+
+按 30 秒采样实测平均每条约 10.5 字节：**64 KB 约容纳 6000 余条，覆盖最近约 52 小时（2.2 天）**。64 KB 对磁盘依旧可以忽略；若想保留一周以上，可继续调大 `MetricsHistoryStore.defaultMaxBytes`（256 KB ≈ 8.7 天，1 MB ≈ 35 天）。历史只存本机，不占服务器空间。
 
 SSH 侧用 `BatchMode=yes`（绝不弹密码框）+ `ConnectTimeout=5` + `ControlMaster=auto/ControlPersist=60`（连接复用，后续轮询毫秒级）+ 12 秒看门狗（防悬挂）。
 
@@ -110,14 +120,14 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 |---|---|---|
 | 语言 | Swift 5.8 | 单语言全栈 |
 | 菜单栏 | AppKit `NSStatusItem` | 常驻图标 + 下拉菜单，LSUIElement 无 Dock 图标 |
-| 设置界面 | SwiftUI（自绘侧栏 + 玻璃卡片） | 连接 / 隧道 / 告警三栏，浅色与深色自适应 |
-| 资源监控 | `top` / `ps`（系统自带） | 轮询取 CPU / 内存；点击 CPU 用 `ps -r` 拉 Top 10 |
+| 设置界面 | SwiftUI（自绘侧栏 + 玻璃卡片 + 自绘折线图） | 连接 / 隧道 / 告警三栏，性能面板浅色与深色自适应 |
+| 资源监控 | `top` / `ps`（系统自带） | 轮询取 CPU / 内存；性能面板按需用 `ps -r` 拉 Top 10 |
 | 通知 | `UNUserNotificationCenter` + `osascript` 兜底 | 双通道：UN 授权失败自动降级 AppleScript，转义经过单测 |
 | 网络 | 系统 `ssh`（Process 调用） | 零第三方依赖，ControlMaster 复用连接 |
 | SSH 隧道 | `autossh`（Process 调用） | 每条映射独立进程，`-M 0` + ServerAlive 守护，App 管生命周期 |
 | 自启 | `SMAppService` | macOS 13+ 原生登录项 |
 | 构建 | **swiftc 直编 + lipo** | 仅需 Command Line Tools，**不需要 Xcode** |
-| 测试 | 自建轻量断言运行器 | `./test.sh` 一键编译运行 57 个单测，零警告 |
+| 测试 | 自建轻量断言运行器 | `./test.sh` 一键编译运行 61 个单测，零警告 |
 
 ## 为什么这样设计（实现要点）
 
@@ -134,7 +144,7 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 环境要求：**仅 Command Line Tools**（`xcode-select --install`），无需完整 Xcode。**使用 SSH 隧道功能时**需额外安装 autossh：`brew install autossh`（只监控电量则不需要）。
 
 ```bash
-./test.sh    # 运行全部 50 个单元测试
+./test.sh    # 运行全部 61 个单元测试
 ./build.sh   # 产物: build/BattMate.app（arm64 + x86_64 universal，ad-hoc 签名）
 ```
 
@@ -148,12 +158,20 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
    - 需要端口转发时，在「SSH 隧道」中添加映射（本机端口 → 服务器端口）；使用前确认已 `brew install autossh`
 4. 保存后开始监控并自动建立隧道；建议在菜单勾选「开机自启动」
 
+## 开发与贡献
+
+- 构建与测试只依赖 Command Line Tools；提交前请运行 `./test.sh`，保持 61 个用例全绿、编译零警告。
+- 业务逻辑集中在 `Sources/BattMateCore`，AppKit / SwiftUI 壳层在 `Sources/BattMate`；新增解析逻辑请同步补充 `Tests/` 下的单测。
+- 提交信息遵循 `<type>: <subject>`（如 `feat:` / `fix:` / `docs:` / `chore:`）。
+- 欢迎 Issue 与 PR；涉及界面的改动请附浅色、深色两张截图。
+
 ## 配置与数据文件
 
 | 文件 | 路径 | 说明 |
 |---|---|---|
 | 配置 | `~/Library/Application Support/BattMate/config.json` | sshTarget / intervalSeconds (15~300，默认30) / lowBatteryThreshold (5~50，默认20) / soundEnabled / autostartEnabled / tunnels[]（`id` / `localPort` / `remotePort` / `enabled`） |
 | 状态 | `~/Library/Application Support/BattMate/status.json` | 最近一次检测结果（实时刷新） |
+| 趋势 | `~/Library/Application Support/BattMate/metrics-history.txt` | CPU / 内存采样历史，严格 ≤ 64 KB（约 6000 条 / 52 小时），超限剔除最旧 |
 | 日志 | `~/Library/Application Support/BattMate/logs/battmate.log` | 每次检测与全部告警 |
 
 ## 故障排查
@@ -162,7 +180,7 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 |---|---|
 | 图标一直灰 `⚠︎--` | 终端手动 `ssh <目标> pmset -g batt` 验证；Permission denied → 执行 `ssh-copy-id <目标>` |
 | CPU / 内存一直显示 — | 终端执行 `ssh <目标> "top -l 2 -n 0 -s 1 | grep -E '^(CPU usage|PhysMem)'"` 检查远端输出 |
-| Top 窗口提示读取失败 | 终端执行 `ssh <目标> "ps -Ao pid=,pcpu=,pmem=,comm= -r | head"` 验证 `ps` 可用性 |
+| Top 进程提示读取失败 | 终端执行 `ssh <目标> "ps -Ao pid=,pcpu=,pmem=,comm= -r | head"` 验证 `ps` 可用性 |
 | 隧道显示 🔴 未找到 autossh | 本机执行 `brew install autossh`，然后在菜单点「重启全部隧道」 |
 | 隧道显示 🔴 本机端口已被占用 | `lsof -nP -iTCP:<本机端口> -sTCP:LISTEN` 找到占用进程，换端口或停掉冲突进程 |
 | 隧道显示 🟠 免密登录未配置或被拒 | 与电量监控使用同一 SSH 目标，先执行 `ssh-copy-id <目标>` |
@@ -174,10 +192,11 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 ## 项目结构
 
 ```
-Sources/BattMateCore/     # 全部业务逻辑（57 个单测覆盖）
+Sources/BattMateCore/     # 全部业务逻辑（61 个单测覆盖）
   PowerState.swift          状态模型
   PMSetOutputParser.swift   pmset 输出解析
   SystemUsage.swift         CPU / 内存模型与 top 输出解析
+  MetricsHistory.swift      64 KB 指标历史（紧凑编码 / 剔除最旧）
   SSHCommandRunner.swift    SSH 执行 + ControlMaster 复用 + 超时看门狗
   SSHBatteryReader.swift    电量 + 资源合并采样
   TopProcess.swift          Top 进程读取与解析
@@ -197,7 +216,7 @@ Sources/BattMate/         # 壳层
   StatusBarUI.swift         NSStatusItem 菜单栏
   Theme.swift               视觉设计系统
   SettingsWindow.swift      SwiftUI 设置窗口
-  TopProcessesWindow.swift  CPU Top 10 实时窗口
+  PerformanceWindow.swift   性能面板（趋势折线图 + CPU Top 10）
 Tests/                    # 自建断言运行器 + 测试
 docs/superpowers/specs/   # 设计文档
 docs/superpowers/plans/   # 实施计划
@@ -226,6 +245,8 @@ A: 当前版本一台（MVP）。`status.json` 的数据接口已按可扩展结
 
 ## Roadmap
 
+- [x] CPU / 内存历史曲线（64 KB 本地环形历史）
+- [ ] 自定义历史容量与采样间隔联动
 - [ ] 通知中心小组件（WidgetKit）——数据接口已预留
 - [ ] 多台服务器机监控
 - [ ] 历史电量曲线

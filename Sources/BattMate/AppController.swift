@@ -8,7 +8,8 @@ final class AppController {
     private let statusUI = StatusBarUI()
     private let settingsWindow = SettingsWindowController()
     private let tunnelManager = TunnelManager()
-    private let topProcessesWindow = TopProcessesWindowController()
+    private let performanceWindow = PerformanceWindowController()
+    private let historyStore: MetricsHistoryStore
 
     private(set) var config: AppConfig
     private var reader: SSHBatteryReader
@@ -33,6 +34,10 @@ final class AppController {
         self.notifier = notifier
         self.config = store.load()
         self.reader = SSHBatteryReader(target: config.sshTarget)
+        self.historyStore = MetricsHistoryStore(
+            fileURL: store.fileURL.deletingLastPathComponent()
+                .appendingPathComponent("metrics-history.txt")
+        )
     }
 
     func start() {
@@ -67,7 +72,7 @@ final class AppController {
         statusUI.onRefresh = { [weak self] in self?.pollOnce() }
         statusUI.onRestartTunnels = { [weak self] in self?.tunnelManager.restartAll() }
         statusUI.onOpenSettings = { [weak self] in self?.openSettings() }
-        statusUI.onShowTopProcesses = { [weak self] in self?.showTopProcesses() }
+        statusUI.onShowPerformance = { [weak self] metric in self?.showPerformance(metric) }
         statusUI.onQuit = { NSApp.terminate(nil) }
         statusUI.onToggleAutostart = { [weak self] enabled in
             guard let self else { return }
@@ -82,12 +87,12 @@ final class AppController {
         }
     }
 
-    private func showTopProcesses() {
+    private func showPerformance(_ metric: PerformanceMetric) {
         guard !config.sshTarget.isEmpty else {
             openSettings()
             return
         }
-        topProcessesWindow.show(target: config.sshTarget)
+        performanceWindow.show(target: config.sshTarget, focus: metric, history: historyStore)
     }
 
     func pollOnce() {
@@ -112,6 +117,11 @@ final class AppController {
         switch result {
         case .success(let s):
             lastSample = s
+            if let usage = s.usage {
+                historyStore.append(MetricsPoint(timestamp: usage.sampledAt,
+                                                 cpuPercent: usage.cpuPercent,
+                                                 memoryPercent: usage.memoryPercent))
+            }
             StatusReport.write(StatusReport(reachable: true, source: s.source, percent: s.percent,
                                             status: s.status, minutesRemaining: s.minutesRemaining,
                                             checkedAt: s.timestamp, lastError: nil, usage: s.usage),
@@ -139,7 +149,8 @@ final class AppController {
             reader = SSHBatteryReader(target: c.sshTarget)
             engine = AlertEngine() // 换目标后重建基线
             lastSample = nil
-            topProcessesWindow.close()
+            historyStore.clear()
+            performanceWindow.close()
         }
         if targetChanged || tunnelsChanged {
             tunnelManager.apply(tunnels: c.tunnels, target: c.sshTarget)
