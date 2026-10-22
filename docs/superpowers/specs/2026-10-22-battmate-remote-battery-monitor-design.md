@@ -59,6 +59,7 @@
 
 3. **AlertEngine**（状态机）
    - 状态：`charging(AC)` / `onBattery` / `unreachable` / `unknown`。
+   - 切换防抖（2026-10-22 用户批准，针对充电器接触不良抖动）：电源来源切换需**连续 2 个同源样例**才确认并发告警（断电与恢复充电同规则，约增加 1 个轮询周期的告警延迟）；失联恢复（reachableAgain）与失败计数不防抖。
    - 转换触发（UNUserNotificationCenter 本地通知，回退 `osascript display notification`；可选声音；同状态只报一次，状态恢复后重置）：
      - AC→Battery：⚠️ 服务器机充电器断开
      - onBattery 且电量 ≤ 阈值（默认 20%，可配）：🟠 低电量
