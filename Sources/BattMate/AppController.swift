@@ -38,6 +38,7 @@ final class AppController {
         // 重复 start 会重复注册）；之后改间隔一律用 restart()
         scheduler.start(interval: clampedInterval)
         if config.sshTarget.isEmpty {
+            store.save(config) // 首次启动即落盘默认配置（冒烟预期：config.json 已生成）
             statusUI.update(sample: nil, failureStreak: 0, checkedAt: nil, unconfigured: true)
             openSettings()
         } else {
