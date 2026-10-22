@@ -52,6 +52,7 @@ registerSanityTests()
 registerPMSetOutputParserTests()
 registerSettingsStoreTests()
 registerAlertEngineTests()
+registerSSHBatteryReaderTests()
 
 // ---- 运行 ----
 var failedCount = 0
