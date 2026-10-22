@@ -49,6 +49,7 @@ func tempTestDir(_ label: String) -> URL {
 // ---- 各测试组注册 ----
 registerSanityTests()
 registerPMSetOutputParserTests()
+registerSettingsStoreTests()
 
 // ---- 运行 ----
 var failedCount = 0
