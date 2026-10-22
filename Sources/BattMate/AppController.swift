@@ -14,6 +14,8 @@ final class AppController {
 
     private var lastSample: PowerSample?
     private var lastCheckedAt: Date?
+    /// 配置代数：换目标后 +1，作废在途请求，防止旧目标的迟到结果污染新引擎
+    private var pollGeneration = 0
 
     /// 轮询间隔钳制到 15~300 秒（spec Global Constraints；config.json 可能被手改越界）
     private var clampedInterval: TimeInterval {
@@ -66,10 +68,12 @@ final class AppController {
 
     func pollOnce() {
         guard !config.sshTarget.isEmpty else { return }
+        let generation = pollGeneration
         lastCheckedAt = Date()
         reader.fetch { [weak self] result in
             DispatchQueue.main.async {
-                self?.handle(result)
+                guard let self, generation == self.pollGeneration else { return } // 旧目标在途请求已作废
+                self.handle(result)
             }
         }
     }
@@ -106,6 +110,7 @@ final class AppController {
         let targetChanged = c.sshTarget != config.sshTarget
         config = c
         if targetChanged {
+            pollGeneration += 1 // 作废换目标前的在途请求
             reader = SSHBatteryReader(target: c.sshTarget)
             engine = AlertEngine() // 换目标后重建基线
             lastSample = nil
