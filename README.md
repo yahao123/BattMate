@@ -8,12 +8,13 @@
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![xcode](https://img.shields.io/badge/Xcode-不需要-success)
 
-一台 Mac 合盖当服务器 7×24 跑着，充电器接触不良、悄悄松脱，机器靠电池撑到耗尽关机，SSH 服务随之中断——而你毫无察觉。**BattMate 就是为这个场景写的**：在你的主力 Mac 菜单栏常驻一个图标，实时显示服务器机的充电状态与 CPU / 内存占用，断电、低电量、失联立刻弹系统通知。顺带把常驻 SSH 端口隧道也收进来：多组「本机端口 → 服务器端口」由 autossh 自动保活。
+一台 Mac 合盖当服务器 7×24 跑着，充电器接触不良、悄悄松脱，机器靠电池撑到耗尽关机，SSH 服务随之中断——而你毫无察觉。**BattMate 就是为这个场景写的**：在你的主力 Mac 菜单栏常驻一个图标，实时显示服务器机的充电状态与 CPU / 内存占用，断电、低电量、失联立刻弹系统通知；桌面 / 通知中心小组件随时瞄一眼就能看到同样的数据。顺带把常驻 SSH 端口隧道也收进来：多组「本机端口 → 服务器端口」由 autossh 自动保活。
 
 ## 功能特性
 
 - 📊 **菜单栏实时状态**：SF Symbol 闪电 / 电池图标 + 电量数字，绿色（电源供电）/ 橙色（电池供电）/ 灰色警告（SSH 失联，失败期间闪烁）
 - 📈 **CPU / 内存监控**：菜单实时显示服务器 CPU 与内存使用率（按负载变色）；点击任一项打开性能面板——最近趋势折线图 + CPU Top 10 进程（每 5 秒刷新）
+- 🖥️ **桌面 / 通知中心小组件**（macOS 14+）：小尺寸显示电量、CPU、内存；中尺寸额外带 CPU / 内存迷你趋势线；在线 / 暂停 / 离线 / 未配置四种状态一目了然，每 5 分钟自动刷新
 - 🗜️ **64 KB 本地趋势**：每次采样追加到本机 `metrics-history.txt`，严格不超过 64 KB，写满自动剔除最旧数据；每 30 秒一条，约可保留最近 52 小时（2.2 天）
 - 🔌 **多端口 SSH 隧道**：配置「本机端口 → 服务器端口」即常驻 `autossh` 本地转发，断线自动重连、异常退出退避重启
 - 📡 **隧道状态可见**：菜单中逐条显示彩色状态点：绿色运行中 / 橙色重连中 / 红色失败 / 灰色停用，可一键重启全部隧道
@@ -41,7 +42,9 @@ flowchart LR
         Q --> H[MetricsHistoryStore<br/>64 KB 本地趋势]
         E --> N[Notifier<br/>系统通知]
         E --> U[StatusBarUI<br/>菜单栏]
-        E --> J[(status.json<br/>为小组件预留)]
+        E --> J[(status.json)]
+        E --> G[(widget-state.json<br/>电量 + CPU / 内存 + 60 点历史)]
+        G --> K[WidgetKit 小组件<br/>小 / 中尺寸]
         U -.点击 CPU / 内存.-> W[PerformanceWindow<br/>折线图 + Top 10]
         H --> W
         W -.按需 / 每 5 秒.-> O[TopProcessReader<br/>ps -r Top 10]
@@ -74,6 +77,20 @@ PhysMem: 12G used (2737M wired, 884M compressor), 4409M unused.
 按 30 秒采样实测平均每条约 10.5 字节：**64 KB 约容纳 6000 余条，覆盖最近约 52 小时（2.2 天）**。64 KB 对磁盘依旧可以忽略；若想保留一周以上，可继续调大 `MetricsHistoryStore.defaultMaxBytes`（256 KB ≈ 8.7 天，1 MB ≈ 35 天）。历史只存本机，不占服务器空间。
 
 SSH 侧用 `BatchMode=yes`（绝不弹密码框）+ `ConnectTimeout=5` + `ControlMaster=auto/ControlPersist=60`（连接复用，后续轮询毫秒级）+ 12 秒看门狗（防悬挂）。
+
+### 桌面小组件（WidgetKit）
+
+每次成功采样后，主 App 会把电量、CPU、内存、连接状态与最近 60 个历史点写入 `~/Library/Application Support/BattMate/widget-state.json`（约 4.5 KB），并通过 `WidgetCenter` 请求刷新。小组件提供两种尺寸：
+
+- **小尺寸**：电量百分比 + 电池图形，底部两枚 CPU / 内存胶囊
+- **中尺寸**：服务器地址、数据新鲜度、在线 / 暂停 / 离线 / 未配置状态，电量卡片 + CPU / 内存趋势卡片（迷你折线图）
+
+时间线一次生成 5 个每分钟的 entry，策略为 5 分钟后重取；主 App 侧同样限流为最多每 5 分钟请求一次，避免浪费 WidgetKit 预算。超过 15 分钟未更新时小组件显示「已暂停」，失联则显示离线原因。
+
+实现上有两个 macOS 约束（都已实测踩坑）：
+
+- **appex 必须沙箱化**：pkd 会直接拒绝未沙箱的插件（`plug-ins must be sandboxed`）。小组件用只读临时例外读取上述共享文件；主 App 不沙箱（要执行 autossh、读 `~/.ssh`），两者沙箱状态不同不影响发现。App Group 在 ad-hoc 签名 + macOS 26 下会卡死 `open()`，因此明确不用。
+- **手写构建必须指定 `NSExtensionMain` 入口**：仅用 `swiftc` + `@main WidgetBundle` 生成的普通可执行文件，在 macOS 26 上 `WidgetBundle.main()` 会立即返回、进程退出，chronod 报 `connection ... invalidated`。链接 `-Xlinker -e -Xlinker _NSExtensionMain` 后与 Xcode 的 app-extension 产物一致，descriptor / timeline / snapshot 全部正常。
 
 ### 告警状态机（含防抖）
 
@@ -121,17 +138,18 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 | 语言 | Swift 5.8 | 单语言全栈 |
 | 菜单栏 | AppKit `NSStatusItem` | 常驻图标 + 下拉菜单，LSUIElement 无 Dock 图标 |
 | 设置界面 | SwiftUI（自绘侧栏 + 玻璃卡片 + 自绘折线图） | 连接 / 隧道 / 告警三栏，性能面板浅色与深色自适应 |
+| 小组件 | WidgetKit + SwiftUI | 小 / 中尺寸，手动打包 appex（macOS 14+），chronod 时间线刷新 |
 | 资源监控 | `top` / `ps`（系统自带） | 轮询取 CPU / 内存；性能面板按需用 `ps -r` 拉 Top 10 |
 | 通知 | `UNUserNotificationCenter` + `osascript` 兜底 | 双通道：UN 授权失败自动降级 AppleScript，转义经过单测 |
 | 网络 | 系统 `ssh`（Process 调用） | 零第三方依赖，ControlMaster 复用连接 |
 | SSH 隧道 | `autossh`（Process 调用） | 每条映射独立进程，`-M 0` + ServerAlive 守护，App 管生命周期 |
 | 自启 | `SMAppService` | macOS 13+ 原生登录项 |
 | 构建 | **swiftc 直编 + lipo** | 仅需 Command Line Tools，**不需要 Xcode** |
-| 测试 | 自建轻量断言运行器 | `./test.sh` 一键编译运行 61 个单测，零警告 |
+| 测试 | 自建轻量断言运行器 | `./test.sh` 一键编译运行 67 个单测，零警告 |
 
 ## 为什么这样设计（实现要点）
 
-- **为什么是菜单栏而不是通知中心小组件？** WidgetKit 小组件刷新预算由系统控制，约 15~60 分钟才刷新一次——对「及时发现断电」完全不合格；且开发必须装 Xcode。菜单栏图标可秒级刷新、始终可见。状态数据仍落盘 `status.json`，为将来补小组件预留了数据接口。
+- **菜单栏和小组件怎么分工？** 菜单栏是「实时告警通道」：30 秒轮询、图标常驻、断电立刻通知；WidgetKit 小组件是「抬头可见的仪表盘」：受系统刷新预算限制（本应用实际约 5 分钟一次），适合随手瞄一眼，不适合发现秒级断电。两者数据同源，互不替代。小组件需要 macOS 14+，主 App 仍兼容 macOS 13。
 - **为什么不用 SwiftPM？** 本项目开发机的 CLT 14.3.1 存在已知缺陷：缺少 `Platforms/MacOSX.platform`，SwiftPM 构建计划硬依赖的 `xcrun --show-sdk-platform-path` 在 CLT 模式下永不提供，`swift build`/`swift test` 一律硬失败且无升级可用。改用 `swiftc -sdk $(xcrun --show-sdk-path)` 直编，构建脚本两次编译（x86_64 + arm64 交叉编译）后 `lipo` 合并 universal 二进制，产物与 SwiftPM 构建无差别。
 - **为什么零第三方依赖？** 一个菜单栏监控工具，保持 ~30MB 内存、单文件部署、新机器拷过去就能用，不值得引入任何包管理。
 - **防抖为什么是 2 次采样？** 目标故障模式是「充电器接触不良」——电源会在通断间抖动。单次采样即告警会造成每 30 秒一对通知的风暴；连续 2 次同源采样确认（约 +30 秒延迟）可过滤全部抖动。
@@ -143,8 +161,10 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 
 环境要求：**仅 Command Line Tools**（`xcode-select --install`），无需完整 Xcode。**使用 SSH 隧道功能时**需额外安装 autossh：`brew install autossh`（只监控电量则不需要）。
 
+`./build.sh` 会同时产出主 App（macOS 13+）和小组件 appex（macOS 14+）：手写 Info.plist、沙箱 entitlements、`NSExtensionMain` 入口与 ad-hoc 签名都由脚本完成，不依赖 Xcode 工程。
+
 ```bash
-./test.sh    # 运行全部 61 个单元测试
+./test.sh    # 运行全部 67 个单元测试
 ./build.sh   # 产物: build/BattMate.app（arm64 + x86_64 universal，ad-hoc 签名）
 ```
 
@@ -160,7 +180,7 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 
 ## 开发与贡献
 
-- 构建与测试只依赖 Command Line Tools；提交前请运行 `./test.sh`，保持 61 个用例全绿、编译零警告。
+- 构建与测试只依赖 Command Line Tools；提交前请运行 `./test.sh`，保持 67 个用例全绿、编译零警告。
 - 业务逻辑集中在 `Sources/BattMateCore`，AppKit / SwiftUI 壳层在 `Sources/BattMate`；新增解析逻辑请同步补充 `Tests/` 下的单测。
 - 提交信息遵循 `<type>: <subject>`（如 `feat:` / `fix:` / `docs:` / `chore:`）。
 - 欢迎 Issue 与 PR；涉及界面的改动请附浅色、深色两张截图。
@@ -171,6 +191,7 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 |---|---|---|
 | 配置 | `~/Library/Application Support/BattMate/config.json` | sshTarget / intervalSeconds (15~300，默认30) / lowBatteryThreshold (5~50，默认20) / soundEnabled / autostartEnabled / tunnels[]（`id` / `localPort` / `remotePort` / `enabled`） |
 | 状态 | `~/Library/Application Support/BattMate/status.json` | 最近一次检测结果（实时刷新） |
+| 小组件 | `~/Library/Application Support/BattMate/widget-state.json` | 电量 / CPU / 内存 / 连接状态 + 最近 60 个历史点（约 4.5 KB），供 WidgetKit 扩展只读 |
 | 趋势 | `~/Library/Application Support/BattMate/metrics-history.txt` | CPU / 内存采样历史，严格 ≤ 64 KB（约 6000 条 / 52 小时），超限剔除最旧 |
 | 日志 | `~/Library/Application Support/BattMate/logs/battmate.log` | 每次检测与全部告警 |
 
@@ -192,7 +213,7 @@ App 会依次在 Homebrew 常见路径（`/opt/homebrew/bin`、`/usr/local/bin`�
 ## 项目结构
 
 ```
-Sources/BattMateCore/     # 全部业务逻辑（61 个单测覆盖）
+Sources/BattMateCore/     # 全部业务逻辑（67 个单测覆盖）
   PowerState.swift          状态模型
   PMSetOutputParser.swift   pmset 输出解析
   SystemUsage.swift         CPU / 内存模型与 top 输出解析
@@ -205,6 +226,7 @@ Sources/BattMateCore/     # 全部业务逻辑（61 个单测覆盖）
   Notifier.swift            通知双通道
   SettingsStore.swift       配置持久化
   StatusReport.swift        status.json 落盘
+  WidgetSnapshot.swift      小组件快照 / 共享文件读写 / 预览数据
   StatusTitleFormatter.swift 图标文本/颜色
   TunnelConfig.swift        隧道配置与端口校验
   AutosshTunnel.swift       autossh 路径探测与参数构造
@@ -217,6 +239,10 @@ Sources/BattMate/         # 壳层
   Theme.swift               视觉设计系统
   SettingsWindow.swift      SwiftUI 设置窗口
   PerformanceWindow.swift   性能面板（趋势折线图 + CPU Top 10）
+Sources/BattMateWidget/   # WidgetKit 扩展（小 / 中尺寸）
+  BattMateWidget.swift      TimelineProvider + WidgetBundle
+  BattMateWidgetUI.swift    小组件视觉与四种状态
+Resources/                # 小组件沙箱与只读文件例外 entitlements
 Tests/                    # 自建断言运行器 + 测试
 docs/superpowers/specs/   # 设计文档
 docs/superpowers/plans/   # 实施计划
@@ -234,6 +260,9 @@ A: 不需要。autossh 只安装在运行 BattMate 的这台 Mac 上（`brew ins
 **Q: 能配置多条隧道吗？会暴露到局域网吗？**
 A: 可以配置任意多条启用映射，每条对应一个独立的 autossh 进程；所有映射共用同一个 SSH 目标，本机端口不能重复。隧道只绑定 `127.0.0.1`，不会暴露到局域网。
 
+**Q: 小组件在哪里添加？多久刷新一次？**
+A: 桌面右键「编辑小组件」，或在通知中心底部点「编辑小组件」，搜索 BattMate；支持小、中两种尺寸。时间线约每 5 分钟刷新一次（受 WidgetKit 预算约束），需要 macOS 14+，服务器机无需安装任何东西。主力机睡眠或 App 退出超过 15 分钟后，小组件进入「已暂停」状态，恢复采样后自动更新。
+
 **Q: 会拖慢我的 Mac 吗？**
 A: 不会。每 30 秒一次 SSH 复用连接的轻量调用 + 一次文本解析，内存占用约 30MB。
 
@@ -247,7 +276,7 @@ A: 当前版本一台（MVP）。`status.json` 的数据接口已按可扩展结
 
 - [x] CPU / 内存历史曲线（64 KB 本地环形历史）
 - [ ] 自定义历史容量与采样间隔联动
-- [ ] 通知中心小组件（WidgetKit）——数据接口已预留
+- [x] 桌面 / 通知中心小组件（WidgetKit，小 / 中尺寸，电量 + CPU / 内存趋势）
 - [ ] 多台服务器机监控
 - [ ] 历史电量曲线
 - [ ] Homebrew Cask 分发

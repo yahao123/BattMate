@@ -110,5 +110,15 @@ Timer tick → SSHBatteryReader.fetch() → PowerState(来源,电量,状态,剩�
 ## 后续演进（2026-10-23）
 
 - 已加入远程 CPU / 内存采样、Top 10 进程窗口与 64 KB 本地历史曲线，详见 [README](../../../README.md)。
-- 「明确不做」中仅历史曲线一项被后续需求推翻，其余仍不在当前范围。
+- 已加入桌面 / 通知中心小组件（WidgetKit），「明确不做」中的小组件一项也被推翻；菜单栏与小组件并存：菜单栏负责 30 秒级实时告警，小组件负责抬头可见的仪表盘，时间线约 5 分钟刷新。
+- 「明确不做」中仍不在当前范围：多台服务器监控、日志查看 UI、远端控制。
+
+### 小组件实现约束（实测）
+
+- **数据共享**：主 App 写入 `~/Library/Application Support/BattMate/widget-state.json`（含最近 60 个历史点）。不使用 App Group：ad-hoc 签名 + macOS 26 下 `open()` 会卡死，且无 Team ID 无法使用 team-prefixed group。
+- **沙箱**：WidgetKit appex 必须启用 `com.apple.security.app-sandbox`，否则 pkd 以 `plug-ins must be sandboxed` 拒绝注册；通过 `com.apple.security.temporary-exception.files.home-relative-path.read-only`（`/Library/Application Support/BattMate/`）读取共享文件。主 App 不沙箱，因为需要执行 autossh 与读取 `~/.ssh`。
+- **打包**：仅用 `swiftc` 构建 appex 时，必须以 `NSExtensionMain` 作为 Mach-O 入口（`-Xlinker -e -Xlinker _NSExtensionMain`）。否则 macOS 26 上 `WidgetBundle.main()` 立即返回，chronod 的 `getAllDescriptors` 得到 `connection ... invalidated`，小组件库中不可见。
+- **刷新**：时间线一次 5 个每分钟 entry，策略 `.after(now + 300)`；主 App 调用 `WidgetCenter.reloadTimelines` 同样限制为 300 秒一次。超过 15 分钟未更新显示「已暂停」。
+
+以上路径与签名逻辑由 `build.sh` 固化，仍保持「仅 Command Line Tools、无需 Xcode」的构建方式。
 

@@ -1,5 +1,6 @@
 // Sources/BattMate/AppController.swift
 import AppKit
+import WidgetKit
 
 final class AppController {
     private let store: SettingsStore
@@ -19,6 +20,11 @@ final class AppController {
     private var lastCheckedAt: Date?
     /// 配置代数：换目标后 +1，作废在途请求，防止旧目标的迟到结果污染新引擎
     private var pollGeneration = 0
+
+    private var lastWidgetReloadAt: Date?
+    private var widgetStoreUnavailableLogged = false
+    /// WidgetKit 有自己的刷新预算，主 App 侧再限制为最多每 5 分钟请求一次
+    private static let widgetReloadInterval: TimeInterval = 300
 
     /// 轮询间隔钳制到 15~300 秒（spec Global Constraints；config.json 可能被手改越界）
     private var clampedInterval: TimeInterval {
@@ -56,6 +62,7 @@ final class AppController {
         if config.sshTarget.isEmpty {
             store.save(config) // 首次启动即落盘默认配置（冒烟预期：config.json 已生成）
             statusUI.update(sample: nil, failureStreak: 0, checkedAt: nil, unconfigured: true)
+            writeWidgetSnapshot(sample: nil, reachable: false, error: nil, forceReload: true)
             openSettings()
         } else {
             if config.autostartEnabled { _ = Autostart.setEnabled(true) }
@@ -126,12 +133,14 @@ final class AppController {
                                             status: s.status, minutesRemaining: s.minutesRemaining,
                                             checkedAt: s.timestamp, lastError: nil, usage: s.usage),
                                to: reportURL)
+            writeWidgetSnapshot(sample: s, reachable: true, error: nil)
             AppLog.write("OK source=\(s.source.rawValue) pct=\(s.percent.map(String.init) ?? "-")")
         case .failure(let msg):
             StatusReport.write(StatusReport(reachable: false, source: nil, percent: nil,
                                             status: nil, minutesRemaining: nil,
                                             checkedAt: Date(), lastError: msg),
                                to: reportURL)
+            writeWidgetSnapshot(sample: lastSample, reachable: false, error: msg)
             AppLog.write("ERR \(msg)")
         }
         statusUI.update(sample: lastSample,
@@ -159,9 +168,52 @@ final class AppController {
         }
         scheduler.restart(interval: clampedInterval)
         if !c.sshTarget.isEmpty {
+            if targetChanged {
+                // 先清掉旧目标的数据，避免新目标首个采样返回前小组件仍显示旧服务器
+                writeWidgetSnapshot(sample: nil, reachable: false, error: nil, forceReload: true)
+            }
             pollOnce()
         } else {
             statusUI.update(sample: nil, failureStreak: 0, checkedAt: nil, unconfigured: true)
+            writeWidgetSnapshot(sample: nil, reachable: false, error: nil, forceReload: true)
         }
+    }
+
+    private func writeWidgetSnapshot(sample: PowerSample?, reachable: Bool,
+                                     error: String?, forceReload: Bool = false) {
+        guard let url = WidgetSharedStore.defaultURL() else {
+            if !widgetStoreUnavailableLogged {
+                widgetStoreUnavailableLogged = true
+                AppLog.write("[WIDGET] 无法访问 Application Support 共享目录，小组件数据未写入")
+            }
+            return
+        }
+        let history = historyStore.points.suffix(60).map {
+            WidgetSnapshot.HistoryPoint(timestamp: $0.timestamp,
+                                        cpuPercent: $0.cpuPercent,
+                                        memoryPercent: $0.memoryPercent)
+        }
+        let snapshot = WidgetSnapshot(reachable: reachable,
+                                      target: config.sshTarget,
+                                      source: sample?.source.rawValue,
+                                      batteryPercent: sample?.percent,
+                                      chargeStatus: sample?.status.rawValue,
+                                      minutesRemaining: sample?.minutesRemaining,
+                                      cpuPercent: sample?.usage?.cpuPercent,
+                                      memoryPercent: sample?.usage?.memoryPercent,
+                                      lastError: error,
+                                      updatedAt: sample?.timestamp ?? Date(),
+                                      history: Array(history),
+                                      historyLimit: 60)
+        WidgetSharedStore.save(snapshot, to: url)
+        reloadWidgets(force: forceReload)
+    }
+
+    private func reloadWidgets(force: Bool) {
+        let now = Date()
+        if !force, let last = lastWidgetReloadAt,
+           now.timeIntervalSince(last) < Self.widgetReloadInterval { return }
+        lastWidgetReloadAt = now
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetSharedStore.widgetKind)
     }
 }
