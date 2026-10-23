@@ -51,7 +51,7 @@ flowchart LR
         T[TunnelManager<br/>每端口一个进程] --> X[autossh × N]
         T --> U
     end
-    A -- "SSH (ControlMaster 复用)" -->|"pmset + top / ps"| B[服务器 Mac<br/>合盖运行]
+    A -- "SSH（ControlMaster 复用）：pmset + top / ps" --> B[服务器 Mac<br/>合盖运行]
     A -- "SSH -L 本地转发" --> B
 ```
 
